@@ -78,6 +78,22 @@ uvx --from ableton-mcp ableton-mcp-install-script --list-targets   # preview tar
 
 That's it — ask Claude to build something.
 
+## What's in this fork
+
+Extends the base Remote Script with a much larger slice of the Live Object
+Model: automation envelope writing, device/track/clip/scene deletion, full
+mixer control (volume/pan/sends), audio clip properties (gain/pitch/warping),
+groove pool assignment, track routing, undo/redo, session record, track/clip
+colour, clip launch settings, per-note MIDI editing (targeted note updates
+and ranged removal), warp marker editing, note selection, and take lanes.
+
+See [`AbletonMCP_Remote_Script/CAPABILITIES.md`](AbletonMCP_Remote_Script/CAPABILITIES.md)
+for a living, honestly-kept audit of what's confirmed working against a real
+Live session, what's implemented but unverified, and what's confirmed absent
+from the Live Object Model entirely (freeze/render/export, track reordering,
+mid-arrangement time signature changes, and save — none of these are exposed
+to Remote Scripts by Ableton, fork or no fork).
+
 ---
 
 ## Table of Contents
