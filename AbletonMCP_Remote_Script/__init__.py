@@ -21,7 +21,7 @@ HOST = "0.0.0.0"
 
 # Bumped whenever the TCP command surface changes; the MCP server compares
 # this to EXPECTED_REMOTE_SCRIPT_VERSION.
-SCRIPT_VERSION = "1.7.0"
+SCRIPT_VERSION = "1.18.0"
 PROTOCOL_VERSION = 1
 
 SCRIPT_CAPABILITIES = [
@@ -44,6 +44,35 @@ SCRIPT_CAPABILITIES = [
     "create_locator",
     "delete_clip",
     "clear_notes_from_clip",
+    "create_automation",
+    "delete_device",
+    "set_mixer_value",
+    "delete_track",
+    "set_audio_clip_properties",
+    "create_scene",
+    "delete_scene",
+    "fire_scene",
+    "get_groove_pool",
+    "set_clip_groove",
+    "investigate_render_capability",
+    "get_track_routing",
+    "set_track_routing",
+    "undo",
+    "redo",
+    "set_track_state",
+    "set_session_record",
+    "set_color",
+    "set_clip_launch_settings",
+    "update_notes",
+    "remove_notes_range",
+    "investigate_advanced_editing",
+    "add_warp_marker",
+    "remove_warp_marker",
+    "move_warp_marker",
+    "get_project_state",
+    "select_notes",
+    "create_take_lane",
+    "get_take_lanes",
 ]
 
 def create_instance(c_instance):
@@ -291,7 +320,17 @@ class AbletonMCP(ControlSurface):
                                  "switch_to_arrangement_view", "set_current_song_time",
                                  "duplicate_session_clip_to_arrangement",
                                  "map_rack_magnitude", "inspect_rack",
-                                 "create_locator"]:
+                                 "create_locator", "create_automation", "delete_device",
+                                 "set_mixer_value", "delete_track",
+                                 "set_audio_clip_properties", "create_scene",
+                                 "delete_scene", "fire_scene", "set_clip_groove",
+                                 "set_track_routing", "undo", "redo",
+                                 "set_track_state", "set_session_record",
+                                 "set_color", "set_clip_launch_settings",
+                                 "update_notes", "remove_notes_range",
+                                 "add_warp_marker", "remove_warp_marker",
+                                 "move_warp_marker", "select_notes",
+                                 "create_take_lane"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -360,11 +399,13 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "load_instrument_or_effect":
                             track_index = params.get("track_index", 0)
                             uri = params.get("uri", "")
-                            result = self._load_instrument_or_effect(track_index, uri)
+                            target = params.get("target", "track")
+                            result = self._load_instrument_or_effect(track_index, uri, target=target)
                         elif command_type == "load_browser_item":
                             track_index = params.get("track_index", 0)
                             item_uri = params.get("item_uri", "")
-                            result = self._load_browser_item(track_index, item_uri)
+                            target = params.get("target", "track")
+                            result = self._load_browser_item(track_index, item_uri, target=target)
                         # ── Arrangement view commands ──────────────────────────────
                         elif command_type == "switch_to_arrangement_view":
                             result = self._switch_to_arrangement_view()
@@ -390,7 +431,145 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "create_locator":
                             name = params.get("name", "")
                             time_val = params.get("time", 0.0)
-                            result = self._create_locator(name, time_val)
+                            # Two-phase/async: queues its own response and may
+                            # do so on a later tick, so skip the generic
+                            # queue-put below for this command.
+                            self._create_locator(name, time_val, response_queue)
+                            return
+                        elif command_type == "create_automation":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            device_index = params.get("device_index", 0)
+                            parameter_index = params.get("parameter_index", 0)
+                            points = params.get("points", [])
+                            result = self._create_automation(
+                                track_index, clip_index, device_index,
+                                parameter_index, points)
+                        elif command_type == "delete_device":
+                            track_index = params.get("track_index", 0)
+                            device_index = params.get("device_index", 0)
+                            result = self._delete_device(track_index, device_index)
+                        elif command_type == "set_mixer_value":
+                            track_index = params.get("track_index", 0)
+                            target = params.get("target", "volume")
+                            value = params.get("value", 0.0)
+                            send_index = params.get("send_index", None)
+                            result = self._set_mixer_value(track_index, target, value, send_index)
+                        elif command_type == "delete_track":
+                            track_index = params.get("track_index", 0)
+                            result = self._delete_track(track_index)
+                        elif command_type == "set_audio_clip_properties":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._set_audio_clip_properties(
+                                track_index, clip_index,
+                                gain=params.get("gain", None),
+                                pitch_coarse=params.get("pitch_coarse", None),
+                                pitch_fine=params.get("pitch_fine", None),
+                                warping=params.get("warping", None),
+                            )
+                        elif command_type == "create_scene":
+                            index = params.get("index", -1)
+                            result = self._create_scene(index)
+                        elif command_type == "delete_scene":
+                            index = params.get("index", 0)
+                            result = self._delete_scene(index)
+                        elif command_type == "fire_scene":
+                            index = params.get("index", 0)
+                            result = self._fire_scene(index)
+                        elif command_type == "set_clip_groove":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            groove_index = params.get("groove_index", 0)
+                            result = self._set_clip_groove(track_index, clip_index, groove_index)
+                        elif command_type == "set_track_routing":
+                            track_index = params.get("track_index", 0)
+                            direction = params.get("direction", "input")
+                            type_name = params.get("type_name", "")
+                            result = self._set_track_routing(track_index, direction, type_name)
+                        elif command_type == "undo":
+                            result = self._undo()
+                        elif command_type == "redo":
+                            result = self._redo()
+                        elif command_type == "set_track_state":
+                            track_index = params.get("track_index", 0)
+                            result = self._set_track_state(
+                                track_index,
+                                mute=params.get("mute", None),
+                                solo=params.get("solo", None),
+                                arm=params.get("arm", None),
+                            )
+                        elif command_type == "set_session_record":
+                            value = params.get("value", False)
+                            result = self._set_session_record(value)
+                        elif command_type == "set_color":
+                            result = self._set_color(
+                                params.get("target", "track"),
+                                params.get("color", 0),
+                                track_index=params.get("track_index", None),
+                                clip_index=params.get("clip_index", None),
+                                scene_index=params.get("scene_index", None),
+                            )
+                        elif command_type == "set_clip_launch_settings":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._set_clip_launch_settings(
+                                track_index, clip_index,
+                                quantization=params.get("quantization", None),
+                                legato=params.get("legato", None),
+                                follow_action_a=params.get("follow_action_a", None),
+                                follow_action_b=params.get("follow_action_b", None),
+                                follow_action_time=params.get("follow_action_time", None),
+                            )
+                        elif command_type == "update_notes":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            notes = params.get("notes", [])
+                            result = self._update_notes(track_index, clip_index, notes)
+                        elif command_type == "remove_notes_range":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._remove_notes_range(
+                                track_index, clip_index,
+                                params.get("from_time", 0.0),
+                                params.get("from_pitch", 0),
+                                params.get("time_span", 128.0),
+                                params.get("pitch_span", 128),
+                            )
+                        elif command_type == "add_warp_marker":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._add_warp_marker(
+                                track_index, clip_index,
+                                params.get("beat_time", 0.0),
+                                params.get("sample_time", 0.0),
+                            )
+                        elif command_type == "remove_warp_marker":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._remove_warp_marker(
+                                track_index, clip_index, params.get("beat_time", 0.0)
+                            )
+                        elif command_type == "move_warp_marker":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._move_warp_marker(
+                                track_index, clip_index,
+                                params.get("from_beat_time", 0.0),
+                                params.get("to_beat_time", 0.0),
+                            )
+                        elif command_type == "select_notes":
+                            track_index = params.get("track_index", 0)
+                            clip_index = params.get("clip_index", 0)
+                            result = self._select_notes(
+                                track_index, clip_index,
+                                note_ids=params.get("note_ids", None),
+                                select_all=params.get("select_all", False),
+                                deselect=params.get("deselect", False),
+                            )
+                        elif command_type == "create_take_lane":
+                            track_index = params.get("track_index", 0)
+                            result = self._create_take_lane(track_index)
 
                         # Put the result in the queue
                         response_queue.put({"status": "success", "result": result})
@@ -442,6 +621,23 @@ class AbletonMCP(ControlSurface):
             elif command_type == "get_arrangement_clips":
                 track_index = params.get("track_index", 0)
                 response["result"] = self._get_arrangement_clips(track_index)
+            elif command_type == "get_groove_pool":
+                response["result"] = self._get_groove_pool()
+            elif command_type == "investigate_render_capability":
+                track_index = params.get("track_index", 0)
+                response["result"] = self._investigate_render_capability(track_index)
+            elif command_type == "get_track_routing":
+                track_index = params.get("track_index", 0)
+                response["result"] = self._get_track_routing(track_index)
+            elif command_type == "get_project_state":
+                response["result"] = self._get_project_state()
+            elif command_type == "get_take_lanes":
+                track_index = params.get("track_index", 0)
+                response["result"] = self._get_take_lanes(track_index)
+            elif command_type == "investigate_advanced_editing":
+                track_index = params.get("track_index", 0)
+                clip_index = params.get("clip_index", 0)
+                response["result"] = self._investigate_advanced_editing(track_index, clip_index)
             # Dataset / state-snapshot reads
             elif command_type == "get_clip_notes":
                 track_index = params.get("track_index", 0)
@@ -666,6 +862,729 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error creating audio track: " + str(e))
             raise
 
+    def _delete_track(self, track_index):
+        """Delete a track (MIDI or audio) from the song."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            name = self._song.tracks[track_index].name
+            self._song.delete_track(track_index)
+            return {"deleted": name, "track_index": track_index}
+        except Exception as e:
+            self.log_message("Error deleting track: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_audio_clip_properties(self, track_index, clip_index, gain=None,
+                                    pitch_coarse=None, pitch_fine=None, warping=None):
+        """Set gain/pitch/warping on an audio clip. Only provided (non-None) fields are changed."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot")
+            clip = clip_slot.clip
+            if not getattr(clip, "is_audio_clip", False):
+                raise Exception("Clip is not an audio clip")
+
+            changed = {}
+            if gain is not None:
+                clip.gain = float(gain)
+                changed["gain"] = float(clip.gain)
+            if pitch_coarse is not None:
+                clip.pitch_coarse = int(pitch_coarse)
+                changed["pitch_coarse"] = int(clip.pitch_coarse)
+            if pitch_fine is not None:
+                clip.pitch_fine = int(pitch_fine)
+                changed["pitch_fine"] = int(clip.pitch_fine)
+            if warping is not None:
+                clip.warping = bool(warping)
+                changed["warping"] = bool(clip.warping)
+            return changed
+        except Exception as e:
+            self.log_message("Error setting audio clip properties: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _create_scene(self, index):
+        """Create a new scene at the given index (-1 = end of list)."""
+        try:
+            self._song.create_scene(index)
+            new_index = len(self._song.scenes) - 1 if index == -1 else index
+            return {"index": new_index, "name": self._song.scenes[new_index].name}
+        except Exception as e:
+            self.log_message("Error creating scene: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _delete_scene(self, index):
+        """Delete the scene at the given index."""
+        try:
+            if index < 0 or index >= len(self._song.scenes):
+                raise IndexError("Scene index out of range")
+            name = self._song.scenes[index].name
+            self._song.delete_scene(index)
+            return {"deleted": name, "index": index}
+        except Exception as e:
+            self.log_message("Error deleting scene: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _fire_scene(self, index):
+        """Launch every clip in the given scene."""
+        try:
+            if index < 0 or index >= len(self._song.scenes):
+                raise IndexError("Scene index out of range")
+            self._song.scenes[index].fire()
+            return {"fired": index}
+        except Exception as e:
+            self.log_message("Error firing scene: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_groove_pool(self):
+        """List the grooves currently loaded in the Groove Pool."""
+        try:
+            grooves = self._song.groove_pool.grooves
+            return {"grooves": [{"index": i, "name": g.name} for i, g in enumerate(grooves)]}
+        except Exception as e:
+            self.log_message("Error getting groove pool: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_clip_groove(self, track_index, clip_index, groove_index):
+        """Assign a Groove Pool groove to a clip (real swing/timing-feel, not hand-written note offsets)."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot")
+            clip = clip_slot.clip
+            grooves = self._song.groove_pool.grooves
+            if groove_index < 0 or groove_index >= len(grooves):
+                raise IndexError("Groove index out of range — call get_groove_pool first")
+            clip.groove = grooves[groove_index]
+            return {"groove": grooves[groove_index].name}
+        except Exception as e:
+            self.log_message("Error setting clip groove: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _investigate_render_capability(self, track_index):
+        """Read-only introspection of what freeze/render/export/bounce surface
+        actually exists on this Live version — deliberately does NOT call
+        anything, since an unknown render/export method could have real side
+        effects (writing files, long blocking operations). Returns filtered
+        dir() listings so a real implementation can be designed with
+        confidence instead of guessed at.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            keywords = ("freeze", "render", "export", "bounce", "flatten", "consolidate")
+
+            def filtered(obj):
+                return [a for a in dir(obj) if any(k in a.lower() for k in keywords)]
+
+            result = {
+                "track_attrs": filtered(track),
+                "song_attrs": filtered(self._song),
+                "app_attrs": filtered(self.application()),
+            }
+            self.log_message("investigate_render_capability: " + str(result))
+            return result
+        except Exception as e:
+            self.log_message("Error investigating render capability: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_project_state(self):
+        """Read the current project's file path and whether it's ever been saved."""
+        try:
+            file_path = getattr(self._song, "file_path", None)
+            return {
+                "file_path": file_path if file_path else None,
+                "has_been_saved": bool(file_path),
+            }
+        except Exception as e:
+            self.log_message("Error getting project state: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _select_notes(self, track_index, clip_index, note_ids=None, select_all=False, deselect=False):
+        """Select notes in a clip by id, select all, or deselect all —
+        confirmed to exist via dir(clip) introspection
+        (select_notes_by_id/select_all_notes/deselect_all_notes/
+        get_selected_notes_extended)."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot")
+            clip = clip_slot.clip
+
+            if deselect:
+                clip.deselect_all_notes()
+            elif select_all:
+                clip.select_all_notes()
+            elif note_ids:
+                clip.select_notes_by_id(list(note_ids))
+            else:
+                raise Exception("Specify note_ids, select_all, or deselect")
+
+            selected = clip.get_selected_notes_extended()
+            return {"selected_count": len(selected)}
+        except Exception as e:
+            self.log_message("Error selecting notes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _create_take_lane(self, track_index):
+        """Create a new take lane on a track — confirmed to exist via
+        dir(track) introspection (create_take_lane/take_lanes)."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            track.create_take_lane()
+            return {"created": True, "take_lane_count": len(track.take_lanes)}
+        except Exception as e:
+            self.log_message("Error creating take lane: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_take_lanes(self, track_index):
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            count = len(track.take_lanes)
+            names = [getattr(track.take_lanes[i], "name", "") for i in range(count)]
+            return {"count": count, "names": names}
+        except Exception as e:
+            self.log_message("Error getting take lanes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_track_routing(self, track_index):
+        """Read a track's current input/output routing and the available options."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            result = {}
+            try:
+                result["input_routing_type"] = track.input_routing_type.display_name
+                result["available_input_routing_types"] = [
+                    t.display_name for t in track.available_input_routing_types
+                ]
+            except Exception as e:
+                result["input_routing_error"] = str(e)
+                result["track_routing_attrs"] = [a for a in dir(track) if "rout" in a.lower()]
+            try:
+                result["output_routing_type"] = track.output_routing_type.display_name
+                result["available_output_routing_types"] = [
+                    t.display_name for t in track.available_output_routing_types
+                ]
+            except Exception as e:
+                result["output_routing_error"] = str(e)
+            return result
+        except Exception as e:
+            self.log_message("Error getting track routing: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_track_routing(self, track_index, direction, type_name):
+        """Set a track's input or output routing by matching display_name.
+
+        direction: "input" or "output". type_name: exact or substring match
+        against the available_*_routing_types list (case-insensitive).
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+
+            if direction == "input":
+                options = track.available_input_routing_types
+            elif direction == "output":
+                options = track.available_output_routing_types
+            else:
+                raise Exception("direction must be 'input' or 'output'")
+
+            match = None
+            for opt in options:
+                if opt.display_name.lower() == type_name.lower():
+                    match = opt
+                    break
+            if match is None:
+                for opt in options:
+                    if type_name.lower() in opt.display_name.lower():
+                        match = opt
+                        break
+            if match is None:
+                raise Exception(
+                    "No routing option matching '" + type_name + "' — available: " +
+                    str([o.display_name for o in options])
+                )
+
+            if direction == "input":
+                track.input_routing_type = match
+            else:
+                track.output_routing_type = match
+            return {"direction": direction, "set_to": match.display_name}
+        except Exception as e:
+            self.log_message("Error setting track routing: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _undo(self):
+        try:
+            if not self._song.can_undo:
+                return {"undone": False, "reason": "Nothing to undo"}
+            self._song.undo()
+            return {"undone": True}
+        except Exception as e:
+            self.log_message("Error undoing: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _redo(self):
+        try:
+            if not self._song.can_redo:
+                return {"redone": False, "reason": "Nothing to redo"}
+            self._song.redo()
+            return {"redone": True}
+        except Exception as e:
+            self.log_message("Error redoing: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_track_state(self, track_index, mute=None, solo=None, arm=None):
+        """Set mute/solo/arm on a track. Only provided (non-None) fields change."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            changed = {}
+            if mute is not None:
+                track.mute = bool(mute)
+                changed["mute"] = bool(track.mute)
+            if solo is not None:
+                track.solo = bool(solo)
+                changed["solo"] = bool(track.solo)
+            if arm is not None:
+                if not getattr(track, "can_be_armed", False):
+                    raise Exception("Track cannot be armed (return/master/group track)")
+                track.arm = bool(arm)
+                changed["arm"] = bool(track.arm)
+            return changed
+        except Exception as e:
+            self.log_message("Error setting track state: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_session_record(self, value):
+        """Set global session record.
+
+        Deliberately does not read the value back to confirm — session_record
+        is transport-level state, same class of property as current_song_time,
+        and reading it back within the same tick reflects the *previous*
+        state, not this call's write (confirmed live: every read was one call
+        behind). Trust the write, as with any fire-and-forget transport toggle.
+        """
+        try:
+            self._song.session_record = bool(value)
+            return {"session_record_set_to": bool(value)}
+        except Exception as e:
+            self.log_message("Error setting session_record: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_color(self, target, color, track_index=None, clip_index=None, scene_index=None):
+        """target: 'track', 'clip', or 'scene'. color: integer RGB, e.g. 0xFF3366."""
+        try:
+            color = int(color)
+            if target == "track":
+                if track_index is None or track_index < 0 or track_index >= len(self._song.tracks):
+                    raise IndexError("Track index out of range")
+                obj = self._song.tracks[track_index]
+            elif target == "clip":
+                if track_index is None or track_index < 0 or track_index >= len(self._song.tracks):
+                    raise IndexError("Track index out of range")
+                track = self._song.tracks[track_index]
+                if clip_index is None or clip_index < 0 or clip_index >= len(track.clip_slots):
+                    raise IndexError("Clip index out of range")
+                clip_slot = track.clip_slots[clip_index]
+                if not clip_slot.has_clip:
+                    raise Exception("No clip in that slot")
+                obj = clip_slot.clip
+            elif target == "scene":
+                if scene_index is None or scene_index < 0 or scene_index >= len(self._song.scenes):
+                    raise IndexError("Scene index out of range")
+                obj = self._song.scenes[scene_index]
+            else:
+                raise Exception("target must be 'track', 'clip', or 'scene'")
+            obj.color = color
+            return {"target": target, "color": int(obj.color)}
+        except Exception as e:
+            self.log_message("Error setting color: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _set_clip_launch_settings(self, track_index, clip_index, quantization=None,
+                                   legato=None, follow_action_a=None,
+                                   follow_action_b=None, follow_action_time=None):
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot")
+            clip = clip_slot.clip
+            changed = {}
+            if quantization is not None:
+                clip.launch_quantization = int(quantization)
+                changed["launch_quantization"] = int(clip.launch_quantization)
+            if legato is not None:
+                clip.legato = bool(legato)
+                changed["legato"] = bool(clip.legato)
+            if follow_action_a is not None:
+                clip.follow_action_a = int(follow_action_a)
+                changed["follow_action_a"] = int(clip.follow_action_a)
+            if follow_action_b is not None:
+                clip.follow_action_b = int(follow_action_b)
+                changed["follow_action_b"] = int(clip.follow_action_b)
+            if follow_action_time is not None:
+                clip.follow_action_time = float(follow_action_time)
+                changed["follow_action_time"] = float(clip.follow_action_time)
+            if not changed:
+                changed["clip_launch_attrs"] = [a for a in dir(clip) if "launch" in a.lower() or "follow" in a.lower() or "legato" in a.lower()]
+            return changed
+        except Exception as e:
+            self.log_message("Error setting clip launch settings: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _update_notes(self, track_index, clip_index, notes):
+        """Modify specific existing notes in place by note_id, without
+        touching any other notes in the clip — unlike add_notes_to_clip
+        (append-only) or clear_notes_from_clip (all-or-nothing), this is a
+        real targeted edit. Uses Clip.apply_note_modifications, the Live 11+
+        API for this; each note dict must include the note_id returned by
+        get_clip_notes.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot")
+            clip = clip_slot.clip
+
+            if not hasattr(clip, "apply_note_modifications") or not hasattr(clip, "get_notes_extended"):
+                return {
+                    "applied": False,
+                    "error": "apply_note_modifications/get_notes_extended not available on this Live version",
+                    "clip_note_attrs": [a for a in dir(clip) if "note" in a.lower()],
+                }
+
+            # apply_note_modifications binds to a fixed C++ struct (TNoteInfo)
+            # and — confirmed live, across four attempts — will NEVER accept
+            # a Python-constructed list or tuple, no matter what's inside it
+            # (a plain dict, a real Clip.MidiNote, mutated or untouched).
+            # The real fix, confirmed live: it only accepts its own native
+            # container type, Clip.MidiNoteVector — specifically, a SLICE of
+            # the vector returned by get_notes_extended. So: keep that
+            # native vector intact (never call list() on it), mutate the
+            # target notes' attributes in place by indexing into it, then
+            # hand back a full-range slice of the SAME vector.
+            raw_notes = clip.get_notes_extended(0, 128, 0.0, float(clip.length) + 1.0)
+            note_count = len(raw_notes)
+
+            by_id = {}
+            for i in range(note_count):
+                n = raw_notes[i]
+                nid = getattr(n, "note_id", None)
+                if nid is not None:
+                    by_id[int(nid)] = n
+
+            missing = []
+            modified_count = 0
+            for spec in notes:
+                nid = int(spec["note_id"])
+                note_obj = by_id.get(nid)
+                if note_obj is None:
+                    missing.append(nid)
+                    continue
+                if "pitch" in spec:
+                    note_obj.pitch = int(spec["pitch"])
+                if "start_time" in spec:
+                    note_obj.start_time = float(spec["start_time"])
+                if "duration" in spec:
+                    note_obj.duration = float(spec["duration"])
+                if "velocity" in spec:
+                    note_obj.velocity = float(spec["velocity"])
+                if "mute" in spec:
+                    note_obj.mute = bool(spec["mute"])
+                if "probability" in spec and hasattr(note_obj, "probability"):
+                    note_obj.probability = float(spec["probability"])
+                if "velocity_deviation" in spec and hasattr(note_obj, "velocity_deviation"):
+                    note_obj.velocity_deviation = float(spec["velocity_deviation"])
+                if "release_velocity" in spec and hasattr(note_obj, "release_velocity"):
+                    note_obj.release_velocity = float(spec["release_velocity"])
+                modified_count += 1
+
+            if modified_count == 0:
+                return {"applied": False, "error": "No matching note_ids found", "missing_note_ids": missing}
+
+            clip.apply_note_modifications(raw_notes[0:note_count])
+            result = {"applied": True, "count": modified_count}
+            if missing:
+                result["missing_note_ids"] = missing
+            return result
+        except Exception as e:
+            self.log_message("Error updating notes: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _remove_notes_range(self, track_index, clip_index, from_time, from_pitch, time_span, pitch_span):
+        """Remove only the notes within a time/pitch range, without clearing
+        the whole clip. Uses Clip.remove_notes_extended (Live 11+)."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot")
+            clip = clip_slot.clip
+
+            if not hasattr(clip, "remove_notes_extended"):
+                return {
+                    "removed": False,
+                    "error": "clip.remove_notes_extended not available on this Live version",
+                    "clip_note_attrs": [a for a in dir(clip) if "note" in a.lower()],
+                }
+
+            # Real C++ signature (confirmed live via the boost::python type
+            # error): (from_pitch: int, pitch_span: int, from_time: double,
+            # time_span: double) — pitch args first and grouped together,
+            # not interleaved with time as the more "readable" order would
+            # suggest.
+            clip.remove_notes_extended(
+                int(from_pitch), int(pitch_span), float(from_time), float(time_span)
+            )
+            return {"removed": True}
+        except Exception as e:
+            self.log_message("Error removing notes range: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _get_warp_clip(self, track_index, clip_index):
+        if track_index < 0 or track_index >= len(self._song.tracks):
+            raise IndexError("Track index out of range")
+        track = self._song.tracks[track_index]
+        if clip_index < 0 or clip_index >= len(track.clip_slots):
+            raise IndexError("Clip index out of range")
+        clip_slot = track.clip_slots[clip_index]
+        if not clip_slot.has_clip:
+            raise Exception("No clip in that slot")
+        clip = clip_slot.clip
+        if not getattr(clip, "is_audio_clip", False):
+            raise Exception("Warp markers only apply to audio clips")
+        return clip
+
+    def _add_warp_marker(self, track_index, clip_index, beat_time, sample_time):
+        """Add a warp marker to an audio clip.
+
+        Confirmed live: neither a dict nor a tuple works — the real error
+        is "No registered converter ... type NApiHelpers::TWarpMarker from
+        ... type tuple", the exact same class of problem as MIDI notes
+        (a genuine C++ struct, no generic-object conversion registered).
+        Live.Clip module lists a WarpMarker class directly, so trying to
+        construct one properly instead of guessing another bare container.
+        """
+        WarpMarker = None
+        try:
+            clip = self._get_warp_clip(track_index, clip_index)
+            import Live.Clip as _live_clip_mod
+            WarpMarker = _live_clip_mod.WarpMarker
+            try:
+                marker = WarpMarker(float(beat_time), float(sample_time))
+            except Exception as e1:
+                self.log_message("add_warp_marker: positional WarpMarker() failed (" + str(e1) + "), trying kwargs")
+                marker = WarpMarker(beat_time=float(beat_time), sample_time=float(sample_time))
+            clip.add_warp_marker(marker)
+            return {"added": True, "beat_time": float(beat_time), "sample_time": float(sample_time)}
+        except Exception as e:
+            if WarpMarker is not None:
+                self.log_message("add_warp_marker: WarpMarker class dir=" + str([a for a in dir(WarpMarker) if not a.startswith("_")]))
+            self.log_message("Error adding warp marker: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _find_nearest_warp_marker_index(self, clip, beat_time):
+        """Find the index of the nearest warp marker WITHOUT converting the
+        native WarpMarkerVector to a plain list — list() is exactly what
+        broke the equivalent MIDI-note lookup (it silently discards the
+        native-container type information the write-side API needs back)."""
+        count = len(clip.warp_markers)
+        if count == 0:
+            raise Exception("Clip has no warp markers")
+        best_i, best_diff = 0, None
+        for i in range(count):
+            diff = abs(getattr(clip.warp_markers[i], "beat_time", 0.0) - float(beat_time))
+            if best_diff is None or diff < best_diff:
+                best_i, best_diff = i, diff
+        return best_i
+
+    def _remove_warp_marker(self, track_index, clip_index, beat_time):
+        """Remove the warp marker nearest to beat_time, passing a native
+        slice of clip.warp_markers back — the same pattern proven to work
+        for MIDI notes (a slice of the native vector, never a Python list)."""
+        try:
+            clip = self._get_warp_clip(track_index, clip_index)
+            i = self._find_nearest_warp_marker_index(clip, beat_time)
+            marker_beat_time = clip.warp_markers[i].beat_time
+            try:
+                clip.remove_warp_marker(clip.warp_markers[i:i + 1])
+            except Exception as e1:
+                self.log_message("remove_warp_marker: vector-slice form failed (" + str(e1) + "), trying single-element indexing")
+                clip.remove_warp_marker(clip.warp_markers[i])
+            return {"removed_near_beat_time": marker_beat_time}
+        except Exception as e:
+            self.log_message("Error removing warp marker: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _move_warp_marker(self, track_index, clip_index, from_beat_time, to_beat_time):
+        """Move an existing warp marker: mutate its beat_time in place
+        (matching how MIDI note attributes were mutated) via native
+        indexing into clip.warp_markers, then hand back a native slice."""
+        try:
+            clip = self._get_warp_clip(track_index, clip_index)
+            i = self._find_nearest_warp_marker_index(clip, from_beat_time)
+            original_time = clip.warp_markers[i].beat_time
+            clip.warp_markers[i].beat_time = float(to_beat_time)
+            try:
+                clip.move_warp_marker(clip.warp_markers[i:i + 1])
+            except Exception as e1:
+                self.log_message("move_warp_marker: apply-after-mutate failed (" + str(e1) + ") — mutation itself may already be sufficient without a separate apply call")
+            return {"moved_from": original_time, "moved_to": float(to_beat_time)}
+        except Exception as e:
+            self.log_message("Error moving warp marker: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _investigate_advanced_editing(self, track_index, clip_index):
+        """Read-only introspection for the genuinely uncertain items: warp
+        marker editing, mid-arrangement time signature changes, track
+        reordering, and Simpler/Sampler slice/reverse control. Deliberately
+        does not guess at calling any of these — just surfaces the real
+        dir() so a follow-up pass can implement with confidence instead of
+        trial-and-error against a live project.
+        """
+        result = {}
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+
+            # Warp markers
+            if clip_index is not None and 0 <= clip_index < len(track.clip_slots):
+                clip_slot = track.clip_slots[clip_index]
+                if clip_slot.has_clip:
+                    clip = clip_slot.clip
+                    result["clip_warp_attrs"] = [a for a in dir(clip) if "warp" in a.lower()]
+                else:
+                    result["clip_warp_attrs"] = "no clip in that slot"
+
+            # Time signature (global vs per-position)
+            result["song_signature_attrs"] = [a for a in dir(self._song) if "signature" in a.lower() or "time_sig" in a.lower()]
+
+            # Track reordering — "move" as a naive substring also matches
+            # every "remove_*_listener" method (re-MOVE contains "move"),
+            # which drowned out the real signal on the first pass. Exclude
+            # anything starting with "add_"/"remove_" (those are always
+            # listener (de)registration in this API, never reordering).
+            def reorder_candidates(obj):
+                return [a for a in dir(obj)
+                        if not a.startswith(("add_", "remove_"))
+                        and ("reorder" in a.lower() or "move" in a.lower() or "position" in a.lower() or "index" in a.lower())]
+            result["song_track_order_attrs"] = reorder_candidates(self._song)
+            result["track_order_attrs"] = reorder_candidates(track)
+
+            # Simpler/Sampler slicing — check devices on this track for
+            # anything that looks like a sampler
+            slicing_info = []
+            for d_i, device in enumerate(track.devices):
+                cname = getattr(device, "class_name", "")
+                if "sampl" in cname.lower() or "simpler" in device.name.lower() or "sampler" in device.name.lower():
+                    slicing_info.append({
+                        "device_index": d_i,
+                        "name": device.name,
+                        "slice_attrs": [a for a in dir(device) if "slic" in a.lower() or "revers" in a.lower() or "sample" in a.lower()],
+                    })
+            result["sampler_devices"] = slicing_info
+
+            # Project file path / unsaved-changes state
+            app = self.application()
+            result["app_attrs_re_file"] = [a for a in dir(app) if any(k in a.lower() for k in ("file", "path", "document", "dirty", "modified", "saved"))]
+            result["song_attrs_re_file"] = [a for a in dir(self._song) if any(k in a.lower() for k in ("file", "path", "document", "dirty", "modified", "saved"))]
+            # Open/new project — expected to be structurally absent (a
+            # Remote Script lives inside one already-open document), same
+            # reasoning as freeze/render. Checking rather than assuming.
+            result["app_attrs_re_project"] = [a for a in dir(app) if any(k in a.lower() for k in ("open_", "new_", "load_project", "close_"))]
+
+            # Note selection state (as opposed to editing by note_id)
+            if clip_index is not None and 0 <= clip_index < len(track.clip_slots):
+                clip_slot = track.clip_slots[clip_index]
+                if clip_slot.has_clip:
+                    clip = clip_slot.clip
+                    result["clip_select_attrs"] = [a for a in dir(clip) if "select" in a.lower()]
+                    if hasattr(clip, "view"):
+                        result["clip_view_attrs"] = [a for a in dir(clip.view) if not a.startswith("_")]
+
+            # Take-lane / comping — Song showed a take_lanes-related listener
+            # in an earlier (differently-filtered) pass; confirming directly.
+            result["track_take_lane_attrs"] = [a for a in dir(track) if "take_lane" in a.lower() or "comp" in a.lower()]
+            if hasattr(track, "take_lanes"):
+                try:
+                    lanes = list(track.take_lanes)
+                    result["take_lanes_count"] = len(lanes)
+                    if lanes:
+                        result["take_lane_0_attrs"] = [a for a in dir(lanes[0]) if not a.startswith("_")]
+                except Exception as e:
+                    result["take_lanes_error"] = str(e)
+
+            self.log_message("investigate_advanced_editing: " + str(result))
+            return result
+        except Exception as e:
+            self.log_message("Error investigating advanced editing: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
 
     def _set_track_name(self, track_index, name):
         """Set the name of a track"""
@@ -1127,58 +2046,204 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error duplicating clip to arrangement: " + str(e))
             raise
 
-    def _create_locator(self, name, time_val):
+    def _create_locator(self, name, time_val, response_queue):
         """Create (or rename) a named locator at the given beat position.
 
-        Uses Live's Song.set_or_delete_cue(), which toggles a cue at the
-        current_song_time. We temporarily move the playhead, toggle, then
-        restore. If a cue already exists at that time we just rename it
-        instead of toggling (which would delete it).
+        Two-phase and asynchronous — puts its own result onto response_queue
+        rather than returning a value, because a single main-thread tick is
+        not enough: setting song.current_song_time and immediately reading
+        it back (or calling set_or_delete_cue() right after) does not
+        reliably reflect the change within that same tick (observed: the
+        read-back stayed at the old position every time). Phase 1 sets the
+        position and schedules phase 2 one tick later; phase 2 does the
+        toggle-and-verify once the engine has actually caught up.
+
+        Renaming an already-existing cue needs no position change, so that
+        case is still handled synchronously.
         """
         try:
             song = self._song
             target_time = float(time_val)
             tolerance = 1e-3
 
-            # See if a cue already exists at (or near) the target time
-            existing = None
             for cue in song.cue_points:
                 if abs(cue.time - target_time) < tolerance:
-                    existing = cue
-                    break
+                    if name:
+                        try:
+                            cue.name = str(name)
+                        except Exception as e:
+                            self.log_message("Could not rename locator: " + str(e))
+                    response_queue.put({"status": "success", "result": {
+                        "time": cue.time, "name": cue.name, "renamed": True,
+                    }})
+                    return
 
             original_time = song.current_song_time
 
-            if existing is None:
-                # Move playhead, toggle to create, then locate the new cue
-                song.current_song_time = target_time
-                song.set_or_delete_cue()
-                for cue in song.cue_points:
-                    if abs(cue.time - target_time) < tolerance:
-                        existing = cue
-                        break
-                # Restore playhead
+            def phase2():
                 try:
-                    song.current_song_time = original_time
-                except Exception:
-                    pass
+                    song.set_or_delete_cue()
+                    existing = None
+                    for cue in song.cue_points:
+                        if abs(cue.time - target_time) < tolerance:
+                            existing = cue
+                            break
+                    try:
+                        song.current_song_time = original_time
+                    except Exception:
+                        pass
 
-            if existing is None:
-                raise Exception("Failed to create cue at time " + str(target_time))
+                    if existing is None:
+                        self.log_message(
+                            "create_locator phase2 diagnostic: target=" + str(target_time) +
+                            " current_song_time_now=" + str(song.current_song_time) +
+                            " all_cue_times=" + str([c.time for c in song.cue_points])
+                        )
+                        response_queue.put({"status": "error", "message":
+                            "Failed to create cue at time " + str(target_time) +
+                            " even after the two-phase timing fix"})
+                        return
 
-            if name:
-                try:
-                    existing.name = str(name)
+                    if name:
+                        try:
+                            existing.name = str(name)
+                        except Exception as e:
+                            self.log_message("Could not rename locator: " + str(e))
+
+                    response_queue.put({"status": "success", "result": {
+                        "time": existing.time, "name": existing.name, "renamed": False,
+                    }})
                 except Exception as e:
-                    self.log_message("Could not rename locator: " + str(e))
+                    self.log_message("Error in create_locator phase2: " + str(e))
+                    self.log_message(traceback.format_exc())
+                    response_queue.put({"status": "error", "message": str(e)})
 
-            return {
-                "success": True,
-                "time": existing.time,
-                "name": existing.name,
-            }
+            song.current_song_time = target_time
+            self.schedule_message(1, phase2)
         except Exception as e:
-            self.log_message("Error creating locator: " + str(e))
+            self.log_message("Error creating locator (phase1): " + str(e))
+            self.log_message(traceback.format_exc())
+            response_queue.put({"status": "error", "message": str(e)})
+
+    def _delete_device(self, track_index, device_index):
+        """Delete a device from a track's device chain."""
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+            name = track.devices[device_index].name
+            track.delete_device(device_index)
+            return {"deleted": name, "device_index": device_index}
+        except Exception as e:
+            self.log_message("Error deleting device: " + str(e))
+            self.log_message(traceback.format_exc())
+            raise
+
+    def _create_automation(self, track_index, clip_index, device_index, parameter_index, points):
+        """Write an automation envelope for a device parameter into a Session clip.
+
+        points: list of {"time": beats_from_clip_start, "value": native_param_value},
+        at least 2 points, sorted by time. The LOM's envelope API is step-based
+        (insert_step) rather than true curves, so a ramp between two points is
+        approximated as many short constant-value steps (one per 16th note,
+        capped at 64 substeps per segment).
+
+        Best-effort implementation: the exact AutomationEnvelope method surface
+        isn't confirmed against this Live version yet. If insert_step's
+        signature doesn't match, this logs the real object's available methods
+        (dir(envelope)) to Live's Log.txt so the call can be corrected in one
+        follow-up pass instead of guessing blind.
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            clip_slot = track.clip_slots[clip_index]
+            if not clip_slot.has_clip:
+                raise Exception("No clip in that slot to attach automation to")
+            clip = clip_slot.clip
+
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+            device = track.devices[device_index]
+
+            if parameter_index < 0 or parameter_index >= len(device.parameters):
+                raise IndexError("Parameter index out of range")
+            param = device.parameters[parameter_index]
+
+            if not points or len(points) < 2:
+                raise Exception("Need at least 2 points (time, value) to write an envelope")
+
+            self.log_message(
+                "create_automation: param=" + str(param.name) +
+                " is_enabled=" + str(getattr(param, "is_enabled", "?")) +
+                " automation_state=" + str(getattr(param, "automation_state", "?"))
+            )
+
+            envelope = clip.automation_envelope(param)
+            if envelope is None:
+                # No envelope exists yet for this parameter on this clip —
+                # automation_envelope() only reads, create_automation_envelope()
+                # actually creates one.
+                envelope = clip.create_automation_envelope(param)
+            if envelope is None:
+                raise Exception(
+                    "clip.create_automation_envelope(param) also returned None for "
+                    "parameter '" + str(param.name) + "' — parameter may not be "
+                    "automatable at all."
+                )
+
+            self.log_message(
+                "create_automation: envelope acquired, available attrs: " +
+                str([a for a in dir(envelope) if not a.startswith("_")])
+            )
+
+            try:
+                envelope.clear_envelope()
+            except Exception as e:
+                self.log_message("create_automation: clear_envelope failed (continuing): " + str(e))
+
+            points_sorted = sorted(points, key=lambda p: float(p["time"]))
+            inserted = 0
+            last_error = None
+
+            for i in range(len(points_sorted) - 1):
+                t0 = float(points_sorted[i]["time"])
+                v0 = float(points_sorted[i]["value"])
+                t1 = float(points_sorted[i + 1]["time"])
+                v1 = float(points_sorted[i + 1]["value"])
+                span = t1 - t0
+                if span <= 0:
+                    continue
+                substeps = max(1, min(64, int(span / 0.25)))
+                step_len = span / substeps
+                for s in range(substeps):
+                    t = t0 + s * step_len
+                    frac = s / float(substeps)
+                    v = v0 + (v1 - v0) * frac
+                    try:
+                        envelope.insert_step(t, step_len, v)
+                        inserted += 1
+                    except Exception as e:
+                        last_error = str(e)
+                        break
+                if last_error:
+                    break
+
+            result = {"inserted_steps": inserted, "parameter": param.name}
+            if last_error:
+                result["error"] = last_error
+                result["envelope_attrs"] = [a for a in dir(envelope) if not a.startswith("_")]
+                self.log_message("create_automation: insert_step failed: " + last_error)
+            return result
+        except Exception as e:
+            self.log_message("Error creating automation: " + str(e))
+            self.log_message(traceback.format_exc())
             raise
 
     # ── Browser implementations ───────────────────────────────────────────────
@@ -1241,14 +2306,21 @@ class AbletonMCP(ControlSurface):
                         continue
                     
                     found = False
+                    part_lower = part.lower()
                     for child in current_item.children:
-                        if child.name.lower() == part.lower():
+                        if not hasattr(child, 'name'):
+                            continue
+                        child_name_lower = child.name.lower()
+                        if (child_name_lower == part_lower or
+                                child_name_lower == part_lower + ".adg" or
+                                os.path.splitext(child_name_lower)[0] == part_lower):
                             current_item = child
                             found = True
                             break
-                    
+
                     if not found:
                         result["error"] = "Path part '{0}' not found".format(part)
+                        result["available_children"] = [c.name for c in current_item.children if hasattr(c, 'name')]
                         return result
                 
                 # Found the item
@@ -1269,7 +2341,7 @@ class AbletonMCP(ControlSurface):
     
     
     
-    def _load_instrument_or_effect(self, track_index, uri):
+    def _load_instrument_or_effect(self, track_index, uri, target="track"):
         """Load an instrument or effect onto a track by its browser URI.
 
         The command dispatcher above calls this method, but it was never
@@ -1279,15 +2351,24 @@ class AbletonMCP(ControlSurface):
         _load_browser_item does, so delegate to it; the only difference is the
         parameter name the MCP server uses ("uri" vs "item_uri").
         """
-        return self._load_browser_item(track_index, uri)
+        return self._load_browser_item(track_index, uri, target=target)
 
-    def _load_browser_item(self, track_index, item_uri):
-        """Load a browser item onto a track by its URI"""
+    def _resolve_track_for_loading(self, track_index, target):
+        """target: 'track' (default, song.tracks), 'return', or 'master'."""
+        if target == "master":
+            return self._song.master_track
+        if target == "return":
+            if track_index < 0 or track_index >= len(self._song.return_tracks):
+                raise IndexError("Return track index out of range")
+            return self._song.return_tracks[track_index]
+        if track_index < 0 or track_index >= len(self._song.tracks):
+            raise IndexError("Track index out of range")
+        return self._song.tracks[track_index]
+
+    def _load_browser_item(self, track_index, item_uri, target="track"):
+        """Load a browser item onto a track (or a return/master track) by URI."""
         try:
-            if track_index < 0 or track_index >= len(self._song.tracks):
-                raise IndexError("Track index out of range")
-            
-            track = self._song.tracks[track_index]
+            track = self._resolve_track_for_loading(track_index, target)
             
             # Access the application's browser instance instead of creating a new one
             app = self.application()
@@ -2308,6 +3389,46 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error setting device parameter: " + str(e))
             raise
 
+    def _set_mixer_value(self, track_index, target, value, send_index=None):
+        """Set a track's volume, panning, or one send level.
+
+        target: "volume", "panning", or "send" (send_index required for "send").
+        """
+        try:
+            if track_index < 0 or track_index >= len(self._song.tracks):
+                raise IndexError("Track index out of range")
+            track = self._song.tracks[track_index]
+            mixer = track.mixer_device
+
+            if target == "volume":
+                param = mixer.volume
+            elif target == "panning":
+                param = mixer.panning
+            elif target == "send":
+                if send_index is None:
+                    raise Exception("send_index is required when target is 'send'")
+                send_index = int(send_index)
+                if send_index < 0 or send_index >= len(mixer.sends):
+                    raise IndexError("Send index out of range")
+                param = mixer.sends[send_index]
+            else:
+                raise Exception("Unknown target '" + str(target) + "' — expected volume/panning/send")
+
+            old = float(param.value)
+            param.value = float(value)
+            return {
+                "track_index": track_index,
+                "target": target,
+                "send_index": send_index,
+                "old_value": old,
+                "value": float(param.value),
+                "min": float(param.min),
+                "max": float(param.max),
+            }
+        except Exception as e:
+            self.log_message("Error setting mixer value: " + str(e))
+            raise
+
     def get_browser_tree(self, category_type="all"):
         """
         Get a simplified tree of browser categories.
@@ -2450,11 +3571,31 @@ class AbletonMCP(ControlSurface):
             browser_attrs = [attr for attr in dir(app.browser) if not attr.startswith('_')]
             self.log_message("Available browser attributes: {0}".format(browser_attrs))
                 
+            # A raw URI (e.g. "query:Drums#FileId_5332") has no meaningful
+            # "/"-separated category structure — route it to the URI-based
+            # lookup instead of naively lower()-ing the whole thing as if it
+            # were a category name (that always fails: "query:drums#..."
+            # matches no category).
+            if path.startswith("query:") or "#" in path:
+                lookup = self._get_browser_item(path, None)
+                if lookup and lookup.get("found") and "item" in lookup:
+                    found_item = lookup["item"]
+                    return {
+                        "path": path,
+                        "name": found_item.get("name"),
+                        "uri": found_item.get("uri"),
+                        "is_folder": found_item.get("is_folder", False),
+                        "is_device": found_item.get("is_device", False),
+                        "is_loadable": found_item.get("is_loadable", False),
+                        "items": [],
+                    }
+                return {"path": path, "error": "URI not found: " + path, "items": []}
+
             # Parse the path
             path_parts = path.split("/")
             if not path_parts:
                 raise ValueError("Invalid path")
-            
+
             # Determine the root category
             root_category = path_parts[0].lower()
             current_item = None
@@ -2505,16 +3646,25 @@ class AbletonMCP(ControlSurface):
                     }
                 
                 found = False
+                part_lower = part.lower()
                 for child in current_item.children:
-                    if hasattr(child, 'name') and child.name.lower() == part.lower():
+                    if not hasattr(child, 'name'):
+                        continue
+                    child_name_lower = child.name.lower()
+                    # Tolerate a missing/mismatched preset extension: "Foo Kit"
+                    # should still match "Foo Kit.adg".
+                    if (child_name_lower == part_lower or
+                            child_name_lower == part_lower + ".adg" or
+                            os.path.splitext(child_name_lower)[0] == part_lower):
                         current_item = child
                         found = True
                         break
-                
+
                 if not found:
                     return {
                         "path": path,
                         "error": "Path part '{0}' not found".format(part),
+                        "available_children": [c.name for c in current_item.children if hasattr(c, 'name')],
                         "items": []
                     }
             
